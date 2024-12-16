@@ -57,7 +57,7 @@ def _scale_confidence_score(score):
 
 def _should_log_confusion_matrix():
     """Determines if the confusion matrix should be logged based on the environment variable settings."""
-    return os.getenv("COMET_EVAL_LOG_CONFUSION_MATRIX", "false").lower() == "true"
+    return os.getenv("COMET_EVAL_LOG_CONFUSION_MATRIX", "true").lower() == "true"
 
 
 def _should_log_image_predictions():
@@ -90,6 +90,7 @@ def _create_experiment(args):
                 "max_image_predictions": _get_max_image_predictions_to_log(),
             }
         )
+        experiment.set_name(args.name)
         experiment.log_other("Created from", "ultralytics")
 
     except Exception as e:
@@ -319,6 +320,28 @@ def on_pretrain_routine_start(trainer):
         _create_experiment(trainer.args)
 
 
+def on_train_start(trainer):
+    print('upload blocks')
+    experiment = comet_ml.get_global_experiment()
+    from pathlib import Path
+    # 获取当前路径
+    ultralytics_path = Path.cwd()
+    experiment.log_code(
+        folder=str(ultralytics_path / 'ultralytics/nn'),
+        overwrite=True,
+    )
+    experiment.log_code(
+        file_name=str(ultralytics_path / 'ultralytics/utils/loss.py'),
+        overwrite=True,
+    )
+    experiment.log_code(
+        file_name=str(ultralytics_path / 'ultralytics/utils/metrics.py'),
+        overwrite=True,
+    )
+    experiment.log_asset(
+        trainer.model.yaml['yaml_file'],
+    )
+
 def on_train_epoch_end(trainer):
     """Log metrics and save batch images at the end of training epochs."""
     experiment = comet_ml.get_global_experiment()
@@ -388,6 +411,7 @@ def on_train_end(trainer):
 callbacks = (
     {
         "on_pretrain_routine_start": on_pretrain_routine_start,
+        'on_train_start': on_train_start,
         "on_train_epoch_end": on_train_epoch_end,
         "on_fit_epoch_end": on_fit_epoch_end,
         "on_train_end": on_train_end,
