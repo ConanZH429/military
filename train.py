@@ -30,7 +30,7 @@ os.environ["COMET_API_KEY"] = "agcu7oeqU395peWf6NCNqnTa7"
 t = time = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
 # 设置超参数
 GPU_name = torch.cuda.get_device_name(0)
-model_name = 'ultralytics/cfg/models/military/yolo11-Sparse.yaml'
+model_name = 'ultralytics/cfg/models/military/yolo11-Deform.yaml'
 epochs = 150
 if '3060' in GPU_name:
     batch = 16
@@ -44,7 +44,7 @@ name = f'{model_name[model_name.rfind("/")+1:].split(".")[0]}-SGD-{epochs}-{batc
 
 model = YOLO(model=model_name)
 
-epochs = 1
+epochs = 2
 
 model.train(
     model=model_name,

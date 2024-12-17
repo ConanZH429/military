@@ -4,6 +4,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
@@ -1143,8 +1144,8 @@ class Sparse_Attention(nn.Module):
         self.qkv = Conv(dim, h, 1, act=False)
         self.proj = Conv(dim, dim, 1, act=False)
         # self.pe = Conv(dim, dim, 3, 1, g=dim, act=False)
-        self.pe = None
-        self.sparse_matrix = None
+        self.pe = {}
+        self.sparse_matrix = {}
 
     def forward(self, x):
         """
@@ -1158,7 +1159,7 @@ class Sparse_Attention(nn.Module):
         """
         B, C, H, W = x.shape
         N = H * W
-        x = x + self.position_embedding(H, W)
+        x = x + self.position_embedding(H, W).to(dtype=x.dtype)
         qkv = self.qkv(x)
         q, k, v = qkv.view(B, self.num_heads, self.key_dim * 2 + self.head_dim, N).split(
             [self.key_dim, self.key_dim, self.head_dim], dim=2
@@ -1177,10 +1178,9 @@ class Sparse_Attention(nn.Module):
             H (int): 图片高度
             W (int): 图片宽度
         """
-        print("building position embedding...")
-        if self.pe is not None:
-            if self.pe.shape[2] == H and self.pe.shape[3] == W:
-                return self.pe
+        if (H, W) in self.pe:
+            return self.pe[(H, W)]
+        print(f"building position embedding with length of {H*W}...")
         length = H * W
         pe = torch.zeros(length, self.dim, dtype=torch.float)  # size(max_sequence_length, d_model)
         exp_1 = torch.arange(self.dim // 2, dtype=torch.float)  # 初始化一半维度，sin位置编码的维度被分为了两部分
@@ -1193,8 +1193,9 @@ class Sparse_Attention(nn.Module):
 
         pe[:, 0::2] = embedding_sin  # 奇数位置设置为sin
         pe[:, 1::2] = embedding_cos  # 偶数位置设置为cos
-        self.pe =  pe.reshape(1, self.dim, H, W).to(self.qkv.conv.weight.device)
-        return self.pe
+        self.pe[(H, W)] =  pe.to(self.qkv.conv.weight.device).reshape(1, self.dim, H, W)
+        print(f"building position embedding with length of {H*W} done")
+        return self.pe[(H, W)]
     
     
     def Sparse_matrix(self, H, W):
@@ -1205,10 +1206,9 @@ class Sparse_Attention(nn.Module):
             H (int): 图片高度
             W (int): 图片宽度
         """
-        print("building sparse matrix...")
-        if self.sparse_matrix is not None:
-            if self.sparse_matrix.shape[2] == H * W:
-                return self.sparse_matrix
+        if (H, W) in self.sparse_matrix:
+            return self.sparse_matrix[(H, W)]
+        print(f"building sparse matrix with shape of {H*W}x{H*W}...")
         length = H * W
         sparse_matrix = torch.zeros(length, length, dtype=torch.int)
         for outH in range(H):
@@ -1217,8 +1217,9 @@ class Sparse_Attention(nn.Module):
                     for inW in range(outW-2, outW+3):
                         if inH >= 0 and inH < H and inW >= 0 and inW < W:
                             sparse_matrix[outH*W+outW, inH*W+inW] = 1
-        self.sparse_matrix = sparse_matrix.to(self.qkv.conv.weight.device)
-        return self.sparse_matrix.reshape(1, 1, length, length)
+        self.sparse_matrix[(H, W)] = sparse_matrix.to(self.qkv.conv.weight.device).reshape(1, 1, length, length)
+        print(f"building sparse matrix  with shape of {H*W}x{H*W} done")
+        return self.sparse_matrix[(H, W)]
         
 
 class Sparse_PSABlock(nn.Module):
@@ -1298,3 +1299,91 @@ class Sparse_C2PSA(nn.Module):
         a, b = self.cv1(x).split((self.c, self.c), dim=1)
         b = self.m(b)
         return self.cv2(torch.cat((a, b), 1))
+
+
+class DeformConv(nn.Module):
+
+    def __init__(self, in_channels, out_channels, groups, kernel_size=(3,3), padding=1, stride=1, dilation=1, bias=False):
+        super(DeformConv, self).__init__()
+        
+        self.offset_net = nn.Conv2d(in_channels=in_channels,
+                                    out_channels=2 * kernel_size[0] * kernel_size[1] if isinstance(kernel_size, tuple) else 2 * kernel_size * kernel_size,
+                                    kernel_size=kernel_size,
+                                    padding=padding,
+                                    stride=stride,
+                                    dilation=dilation,
+                                    bias=bias)
+
+        self.deform_conv = torchvision.ops.DeformConv2d(in_channels=in_channels,
+                                                        out_channels=out_channels,
+                                                        kernel_size=kernel_size,
+                                                        padding=padding,
+                                                        groups=groups,
+                                                        stride=stride,
+                                                        dilation=dilation,
+                                                        bias=bias)
+
+    def forward(self, x):
+        offsets = self.offset_net(x)
+        out = self.deform_conv(x, offsets)
+        return out
+
+class Bottleneck_Deform(nn.Module):
+    """Standard bottleneck."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        """Initializes a standard bottleneck module with optional shortcut connection and configurable parameters."""
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        # self.cv2 = Conv(c_, c2, k[1], 1, g=g)
+        self.cv2 = DeformConv(c_, c2, kernel_size=k[1], groups=g)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        """Applies the YOLO FPN to input data."""
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+class C2f_Deform(nn.Module):
+    """Faster Implementation of CSP Bottleneck with 2 convolutions."""
+
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
+        """Initializes a CSP bottleneck with 2 convolutions and n Bottleneck blocks for faster processing."""
+        super().__init__()
+        self.c = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
+        self.m = nn.ModuleList(Bottleneck_Deform(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+
+    def forward(self, x):
+        """Forward pass through C2f layer."""
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+
+    def forward_split(self, x):
+        """Forward pass using split() instead of chunk()."""
+        y = self.cv1(x).split((self.c, self.c), 1)
+        y = [y[0], y[1]]
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+
+class C3k_Deform(C3):
+    """C3k is a CSP bottleneck module with customizable kernel sizes for feature extraction in neural networks."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, k=3):
+        """Initializes the C3k module with specified channels, number of layers, and configurations."""
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)  # hidden channels
+        # self.m = nn.Sequential(*(RepBottleneck(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n)))
+        self.m = nn.Sequential(*(Bottleneck_Deform(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n)))
+
+class C3k2_Deform(C2f_Deform):
+    """Faster Implementation of CSP Bottleneck with 2 convolutions."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        """Initializes the C3k2 module, a faster CSP Bottleneck with 2 convolutions and optional C3k blocks."""
+        super().__init__(c1, c2, n, shortcut, g, e)
+        self.m = nn.ModuleList(
+            C3k_Deform(self.c, self.c, 2, shortcut, g) if c3k else Bottleneck_Deform(self.c, self.c, shortcut, g) for _ in range(n)
+        )
