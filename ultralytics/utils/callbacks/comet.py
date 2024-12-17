@@ -402,6 +402,7 @@ def on_train_end(trainer):
     _log_image_predictions(experiment, trainer.validator, curr_step)
     _log_images(experiment, trainer.save_dir.glob("train_batch*.jpg"), curr_step)
     _log_images(experiment, trainer.save_dir.glob("val_batch*.jpg"), curr_step)
+    trainer.comet_key = experiment.get_key()
     experiment.end()
 
     global _comet_image_prediction_count

@@ -25,7 +25,7 @@ with open(data_yaml_path) as f:
 os.system(f'cp ./train.txt {data_path}/train.txt')
 os.system(f'cp ./val.txt {data_path}/val.txt')
 os.system(f'cp ./test.txt {data_path}/test.txt')
-os.system("export COMET_API_KEY=agcu7oeqU395peWf6NCNqnTa7")
+os.environ["COMET_API_KEY"] = "agcu7oeqU395peWf6NCNqnTa7"
 
 t = time = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
 # 设置超参数
@@ -44,6 +44,8 @@ name = f'{model_name[model_name.rfind("/")+1:].split(".")[0]}-SGD-{epochs}-{batc
 
 model = YOLO(model=model_name)
 
+epochs = 1
+
 model.train(
     model=model_name,
     epochs=epochs,
@@ -52,7 +54,7 @@ model.train(
 )
 
 # val
-experiment = comet_ml.get_global_experiment()
+experiment = comet_ml.start(experiment_key=model.trainer.comet_key)
 label = {0: "tank", 1: "armored", 2: "truck", 3: "light"}
 
 
