@@ -56,6 +56,7 @@ from .block import (
     RepVGGDW,
     ResNetLayer,
     SCDown,
+    Sparse_C2PSA
 )
 from .conv import (
     CBAM,

@@ -1107,3 +1107,194 @@ class SCDown(nn.Module):
     def forward(self, x):
         """Applies convolution and downsampling to the input tensor in the SCDown module."""
         return self.cv2(self.cv1(x))
+
+
+# myblock
+
+class Sparse_Attention(nn.Module):
+    """
+    Attention module that performs Sparse self-attention on the input tensor.
+
+    Args:
+        dim (int): The input tensor dimension.
+        num_heads (int): The number of attention heads.
+        attn_ratio (float): The ratio of the attention key dimension to the head dimension.
+
+    Attributes:
+        num_heads (int): The number of attention heads.
+        head_dim (int): The dimension of each attention head.
+        key_dim (int): The dimension of the attention key.
+        scale (float): The scaling factor for the attention scores.
+        qkv (Conv): Convolutional layer for computing the query, key, and value.
+        proj (Conv): Convolutional layer for projecting the attended values.
+        pe (Conv): Convolutional layer for positional encoding.
+    """
+
+    def __init__(self, dim, num_heads=8, attn_ratio=0.5):
+        """Initializes multi-head attention module with query, key, and value convolutions and positional encoding."""
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.key_dim = int(self.head_dim * attn_ratio)
+        self.scale = self.key_dim**-0.5
+        nh_kd = self.key_dim * num_heads
+        h = dim + nh_kd * 2
+        self.qkv = Conv(dim, h, 1, act=False)
+        self.proj = Conv(dim, dim, 1, act=False)
+        # self.pe = Conv(dim, dim, 3, 1, g=dim, act=False)
+        self.pe = None
+        self.sparse_matrix = None
+
+    def forward(self, x):
+        """
+        Forward pass of the Attention module.
+
+        Args:
+            x (torch.Tensor): The input tensor.
+
+        Returns:
+            (torch.Tensor): The output tensor after self-attention.
+        """
+        B, C, H, W = x.shape
+        N = H * W
+        x = x + self.position_embedding(H, W)
+        qkv = self.qkv(x)
+        q, k, v = qkv.view(B, self.num_heads, self.key_dim * 2 + self.head_dim, N).split(
+            [self.key_dim, self.key_dim, self.head_dim], dim=2
+        )
+        attn = (q.transpose(-2, -1) @ k) * self.Sparse_matrix(H, W) * self.scale
+        attn = attn.softmax(dim=-1)
+        x = (v @ attn.transpose(-2, -1)).view(B, C, H, W)
+        x = self.proj(x)
+        return x
+
+    def position_embedding(self, H, W):
+        """
+        绝对位置编码,长度为图片展开后H*W
+        
+        Args:
+            H (int): 图片高度
+            W (int): 图片宽度
+        """
+        print("building position embedding...")
+        if self.pe is not None:
+            if self.pe.shape[2] == H and self.pe.shape[3] == W:
+                return self.pe
+        length = H * W
+        pe = torch.zeros(length, self.dim, dtype=torch.float)  # size(max_sequence_length, d_model)
+        exp_1 = torch.arange(self.dim // 2, dtype=torch.float)  # 初始化一半维度，sin位置编码的维度被分为了两部分
+        exp_value = exp_1 / (self.dim / 2)
+
+        alpha = 1 / (10000.0 ** exp_value)  # size(dmodel/2)
+        out = torch.arange(length, dtype=torch.float)[:, None] @ alpha[None, :]  # size(max_sequence_length, d_model/2)
+        embedding_sin = torch.sin(out)
+        embedding_cos = torch.cos(out)
+
+        pe[:, 0::2] = embedding_sin  # 奇数位置设置为sin
+        pe[:, 1::2] = embedding_cos  # 偶数位置设置为cos
+        self.pe =  pe.reshape(1, self.dim, H, W).to(self.qkv.conv.weight.device)
+        return self.pe
+    
+    
+    def Sparse_matrix(self, H, W):
+        """
+        生成稀疏矩阵
+        
+        Args:
+            H (int): 图片高度
+            W (int): 图片宽度
+        """
+        print("building sparse matrix...")
+        if self.sparse_matrix is not None:
+            if self.sparse_matrix.shape[2] == H * W:
+                return self.sparse_matrix
+        length = H * W
+        sparse_matrix = torch.zeros(length, length, dtype=torch.int)
+        for outH in range(H):
+            for outW in range(W):
+                for inH in range(outH-2, outH+3):
+                    for inW in range(outW-2, outW+3):
+                        if inH >= 0 and inH < H and inW >= 0 and inW < W:
+                            sparse_matrix[outH*W+outW, inH*W+inW] = 1
+        self.sparse_matrix = sparse_matrix.to(self.qkv.conv.weight.device)
+        return self.sparse_matrix.reshape(1, 1, length, length)
+        
+
+class Sparse_PSABlock(nn.Module):
+    """
+    PSABlock class implementing a Position-Sensitive Attention block for neural networks.
+
+    This class encapsulates the functionality for applying multi-head attention and feed-forward neural network layers
+    with optional shortcut connections.
+
+    Attributes:
+        attn (Attention): Multi-head attention module.
+        ffn (nn.Sequential): Feed-forward neural network module.
+        add (bool): Flag indicating whether to add shortcut connections.
+
+    Methods:
+        forward: Performs a forward pass through the PSABlock, applying attention and feed-forward layers.
+
+    Examples:
+        Create a PSABlock and perform a forward pass
+        >>> psablock = PSABlock(c=128, attn_ratio=0.5, num_heads=4, shortcut=True)
+        >>> input_tensor = torch.randn(1, 128, 32, 32)
+        >>> output_tensor = psablock(input_tensor)
+    """
+
+    def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True) -> None:
+        """Initializes the PSABlock with attention and feed-forward layers for enhanced feature extraction."""
+        super().__init__()
+
+        self.attn = Sparse_Attention(c, attn_ratio=attn_ratio, num_heads=num_heads)
+        self.ffn = nn.Sequential(Conv(c, c * 2, 1), Conv(c * 2, c, 1, act=False))
+        self.add = shortcut
+
+    def forward(self, x):
+        """Executes a forward pass through PSABlock, applying attention and feed-forward layers to the input tensor."""
+        x = x + self.attn(x) if self.add else self.attn(x)
+        x = x + self.ffn(x) if self.add else self.ffn(x)
+        return x
+
+
+class Sparse_C2PSA(nn.Module):
+    """
+    C2PSA module with attention mechanism for enhanced feature extraction and processing.
+
+    This module implements a convolutional block with attention mechanisms to enhance feature extraction and processing
+    capabilities. It includes a series of PSABlock modules for self-attention and feed-forward operations.
+
+    Attributes:
+        c (int): Number of hidden channels.
+        cv1 (Conv): 1x1 convolution layer to reduce the number of input channels to 2*c.
+        cv2 (Conv): 1x1 convolution layer to reduce the number of output channels to c.
+        m (nn.Sequential): Sequential container of PSABlock modules for attention and feed-forward operations.
+
+    Methods:
+        forward: Performs a forward pass through the C2PSA module, applying attention and feed-forward operations.
+
+    Notes:
+        This module essentially is the same as PSA module, but refactored to allow stacking more PSABlock modules.
+
+    Examples:
+        >>> c2psa = C2PSA(c1=256, c2=256, n=3, e=0.5)
+        >>> input_tensor = torch.randn(1, 256, 64, 64)
+        >>> output_tensor = c2psa(input_tensor)
+    """
+
+    def __init__(self, c1, c2, n=1, e=0.5):
+        """Initializes the C2PSA module with specified input/output channels, number of layers, and expansion ratio."""
+        super().__init__()
+        assert c1 == c2
+        self.c = int(c1 * e)
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv(2 * self.c, c1, 1)
+
+        self.m = nn.Sequential(*(Sparse_PSABlock(self.c, attn_ratio=0.5, num_heads=self.c // 64) for _ in range(n)))
+
+    def forward(self, x):
+        """Processes the input tensor 'x' through a series of PSA blocks and returns the transformed tensor."""
+        a, b = self.cv1(x).split((self.c, self.c), dim=1)
+        b = self.m(b)
+        return self.cv2(torch.cat((a, b), 1))
