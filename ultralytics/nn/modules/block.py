@@ -1463,7 +1463,7 @@ class SpatialAttention(nn.Module):
         return x * y
 
 class InvertedResidual(nn.Module):
-    def __init__(self, c1, c2, kernel=3, stride=1, expanded_ratio=4, activation=Conv.default_act, use_se=False, use_sa=False, shortcut=True):
+    def __init__(self, c1, c2, kernel=3, stride=1, expanded_ratio=8, activation=Conv.default_act, use_se=False, use_sa=False, shortcut=True):
         super().__init__()
         c_ = int(c1 * expanded_ratio)
         self.layer = nn.Sequential(
@@ -1486,7 +1486,8 @@ class Bottleneck_InvertedResidual(nn.Module):
         """Initializes a standard bottleneck module with optional shortcut connection and configurable parameters."""
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
-        self.cv1 = InvertedResidual(c1, c_, k[0], 1, shortcut=shortcut, expanded_ratio=1)
+        # self.cv1 = InvertedResidual(c1, c_, k[0], 1, shortcut=shortcut, expanded_ratio=1)
+        self.cv1 = Conv(c1, c_, k[0], 1)
         self.cv2 = InvertedResidual(c_, c2, k[1], 1, shortcut=shortcut, use_sa=True, use_se=True)
         self.add = shortcut and c1 == c2
 
@@ -1511,5 +1512,5 @@ class C3k2_InvertedResidual(C2f):
         """Initializes the C3k2 module, a faster CSP Bottleneck with 2 convolutions and optional C3k blocks."""
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(
-            C3k_InvertedResidual(self.c, self.c, 2, shortcut, g) if c3k else Bottleneck_InvertedResidual(self.c, self.c, shortcut, g) for _ in range(n)
+            C3k_InvertedResidual(self.c, self.c, 2, shortcut, g) if c3k else Bottleneck_InvertedResidual(self.c, self.c, shortcut, g, e=1.0) for _ in range(n)
         )

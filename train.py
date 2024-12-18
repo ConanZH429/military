@@ -35,11 +35,11 @@ if '3060' in GPU_name:
 elif '3080' in GPU_name:
     batch = 32
 elif '4090' in GPU_name:
-    batch = 96
+    batch = 64
 elif '3090' in GPU_name:
     batch = 64
     
-model_name = 'ultralytics/cfg/models/military/yolo11-InvertedResidual.yaml'
+model_name = 'ultralytics/cfg/models/military/yolo11-p2.yaml'
 epochs = 5
 os.environ["COMET_MODE"] = "offline"
 name = f'{model_name[model_name.rfind("/")+1:].split(".")[0]}-SGD-{epochs}-{batch}-{time}'
