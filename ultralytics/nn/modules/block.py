@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+from torch.nn import init
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
@@ -1387,3 +1388,74 @@ class C3k2_Deform(C2f_Deform):
         self.m = nn.ModuleList(
             C3k_Deform(self.c, self.c, 2, shortcut, g) if c3k else Bottleneck_Deform(self.c, self.c, shortcut, g) for _ in range(n)
         )
+
+class SEAttention(nn.Module):
+    def __init__(self, channel=512,reduction=16):
+        super().__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channel, channel // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel, bias=False),
+            nn.Sigmoid()
+        )
+        self.init_weights()
+
+    def init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                init.kaiming_normal_(m.weight, mode='fan_out')
+                if m.bias is not None:
+                    init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                init.constant_(m.weight, 1)
+                init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                init.normal_(m.weight, std=0.001)
+                if m.bias is not None:
+                    init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y_avg = self.avg_pool(x).view(b, c)
+        y_max = self.max_pool(x).view(b, c)
+        y = self.fc(y_avg+y_max).view(b, c, 1, 1)
+        return x * y.expand_as(x)
+
+class SEDA(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.conv0 = nn.Sequential(Conv(dim, dim, 5, p=2, g=dim), nn.Conv2d(dim, dim, 1))
+        self.conv_spatial = DeformConv(dim, dim, kernel_size=(5, 5), stride=1, padding=6, groups=dim, dilation=3)
+        self.conv1 = nn.Conv2d(dim, dim, 1)
+        self.chennel_attention = SEAttention(dim)
+
+    def forward(self, x):
+        u = x.clone()        
+        attn = self.conv0(x)
+        attn = self.conv_spatial(attn)
+        attn = self.conv1(attn)
+        attn = self.chennel_attention(attn)
+        return u * attn
+
+class Bottleneck_SEDA(nn.Module):
+    """Standard bottleneck."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        """Initializes a standard bottleneck module with optional shortcut connection and configurable parameters."""
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.attention = SEDA(c_)
+        self.cv2 = Conv(c_, c2, k[1], 1, g=g)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        """Applies the YOLO FPN to input data."""
+        return x + self.cv2(self.attention(self.cv1(x))) if self.add else self.cv2(self.attention(self.cv1(x)))
+
+class C2f_SEDA(C2f):
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        self.m = nn.ModuleList(Bottleneck_SEDA(self.c, self.c, shortcut, g, k=(3, 3), e=1.0) for _ in range(n))

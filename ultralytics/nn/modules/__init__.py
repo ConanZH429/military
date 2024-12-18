@@ -57,7 +57,8 @@ from .block import (
     ResNetLayer,
     SCDown,
     Sparse_C2PSA,
-    C3k2_Deform
+    C3k2_Deform,
+    C2f_SEDA
 )
 from .conv import (
     CBAM,

@@ -173,3 +173,4 @@ pnnx*
 calibration_*.npy
 
 /military/
+*.zip

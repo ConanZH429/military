@@ -25,12 +25,13 @@ with open(data_yaml_path) as f:
 os.system(f'cp ./train.txt {data_path}/train.txt')
 os.system(f'cp ./val.txt {data_path}/val.txt')
 os.system(f'cp ./test.txt {data_path}/test.txt')
+os.environ["COMET_MODE"] = "offline"
 os.environ["COMET_API_KEY"] = "agcu7oeqU395peWf6NCNqnTa7"
 
 t = time = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
 # 设置超参数
 GPU_name = torch.cuda.get_device_name(0)
-model_name = 'ultralytics/cfg/models/military/yolo11-Deform.yaml'
+model_name = 'ultralytics/cfg/models/military/yolov8-C2fSEDA.yaml'
 epochs = 150
 if '3060' in GPU_name:
     batch = 16
@@ -43,7 +44,6 @@ elif '3090' in GPU_name:
 name = f'{model_name[model_name.rfind("/")+1:].split(".")[0]}-SGD-{epochs}-{batch}-{time}'
 
 model = YOLO(model=model_name)
-
 epochs = 2
 
 model.train(
