@@ -25,14 +25,11 @@ with open(data_yaml_path) as f:
 os.system(f'cp ./train.txt {data_path}/train.txt')
 os.system(f'cp ./val.txt {data_path}/val.txt')
 os.system(f'cp ./test.txt {data_path}/test.txt')
-os.environ["COMET_MODE"] = "offline"
 os.environ["COMET_API_KEY"] = "agcu7oeqU395peWf6NCNqnTa7"
 
 t = time = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
 # 设置超参数
 GPU_name = torch.cuda.get_device_name(0)
-model_name = 'ultralytics/cfg/models/military/yolov8-C2fSEDA.yaml'
-epochs = 150
 if '3060' in GPU_name:
     batch = 16
 elif '3080' in GPU_name:
@@ -41,10 +38,13 @@ elif '4090' in GPU_name:
     batch = 96
 elif '3090' in GPU_name:
     batch = 64
+    
+model_name = 'ultralytics/cfg/models/military/yolov8.yaml'
+epochs = 5
+# os.environ["COMET_MODE"] = "offline"
 name = f'{model_name[model_name.rfind("/")+1:].split(".")[0]}-SGD-{epochs}-{batch}-{time}'
 
 model = YOLO(model=model_name)
-epochs = 2
 
 model.train(
     model=model_name,
@@ -56,7 +56,6 @@ model.train(
 # val
 experiment = comet_ml.start(experiment_key=model.trainer.comet_key)
 label = {0: "tank", 1: "armored", 2: "truck", 3: "light"}
-
 
 best_path = f"./military/{name}/weights/best.pt"
 model = YOLO(best_path)
@@ -94,7 +93,7 @@ experiment.log_confusion_matrix(
 )
 print("Uploading confusion matrix done.")
 # 图像
-val_path = Path(f"military/{test_name}")
+val_path = Path(f"./military/{test_name}")
 # 将val_path下的图片上传到comet
 for img in val_path.iterdir():
     img_name = img.name
