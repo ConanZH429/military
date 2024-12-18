@@ -63,7 +63,8 @@ from ultralytics.nn.modules import (
     v10Detect,
     Sparse_C2PSA,
     C3k2_Deform,
-    C2f_SEDA
+    C2f_SEDA,
+    C3k2_InvertedResidual
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1002,7 +1003,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2fCIB,
             C3k2_Deform,
             Sparse_C2PSA,
-            C2f_SEDA
+            C2f_SEDA,
+            C3k2_InvertedResidual
         }:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
@@ -1031,7 +1033,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 C2PSA,
                 Sparse_C2PSA,
                 C3k2_Deform,
-                C2f_SEDA
+                C2f_SEDA,
+                C3k2_InvertedResidual
             }:
                 args.insert(2, n)  # number of repeats
                 n = 1

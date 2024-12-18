@@ -1390,7 +1390,7 @@ class C3k2_Deform(C2f_Deform):
         )
 
 class SEAttention(nn.Module):
-    def __init__(self, channel=512,reduction=16):
+    def __init__(self, channel=512,reduction=4):
         super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
@@ -1400,21 +1400,6 @@ class SEAttention(nn.Module):
             nn.Linear(channel // reduction, channel, bias=False),
             nn.Sigmoid()
         )
-        self.init_weights()
-
-    def init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                init.kaiming_normal_(m.weight, mode='fan_out')
-                if m.bias is not None:
-                    init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                init.constant_(m.weight, 1)
-                init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                init.normal_(m.weight, std=0.001)
-                if m.bias is not None:
-                    init.constant_(m.bias, 0)
 
     def forward(self, x):
         b, c, _, _ = x.size()
@@ -1459,3 +1444,72 @@ class C2f_SEDA(C2f):
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(Bottleneck_SEDA(self.c, self.c, shortcut, g, k=(3, 3), e=1.0) for _ in range(n))
+
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+ 
+        assert  kernel_size in (3, 7), 'kernel size must be 3 or 7'
+        padding = 3 if kernel_size == 7 else 1
+ 
+        self.conv1 = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
+        self.sigmoid = nn.Sigmoid()
+    def forward(self, x):
+        avg_out = torch.mean(x, dim=1, keepdim=True)     # 平均池化
+        max_out,_ = torch.max(x, dim=1, keepdim=True)    # 最大池化
+        y = torch.cat([avg_out, max_out], dim=1)
+        y = self.conv1(y)
+        y = self.sigmoid(y)
+        return x * y
+
+class InvertedResidual(nn.Module):
+    def __init__(self, c1, c2, kernel=3, stride=1, expanded_ratio=4, activation=Conv.default_act, use_se=False, use_sa=False, shortcut=True):
+        super().__init__()
+        c_ = int(c1 * expanded_ratio)
+        self.layer = nn.Sequential(
+            Conv(c1, c_, 1, 1, act=activation),
+            Conv(c_, c_, kernel, stride, g=c_, act=activation),
+            SEAttention(c_) if use_se else nn.Identity(),
+            Conv(c_, c2, 1, 1, act=activation),
+            SpatialAttention(kernel_size=7) if use_sa else nn.Identity()
+        )
+        self.add = shortcut and c1 == c2
+    
+    def forward(self, x):
+        return x + self.layer(x) if self.add else self.layer(x)
+
+
+class Bottleneck_InvertedResidual(nn.Module):
+    """Standard bottleneck."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        """Initializes a standard bottleneck module with optional shortcut connection and configurable parameters."""
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = InvertedResidual(c1, c_, k[0], 1, shortcut=shortcut, expanded_ratio=1)
+        self.cv2 = InvertedResidual(c_, c2, k[1], 1, shortcut=shortcut, use_sa=True, use_se=True)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        """Applies the YOLO FPN to input data."""
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+class C3k_InvertedResidual(C3):
+    """C3k is a CSP bottleneck module with customizable kernel sizes for feature extraction in neural networks."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, k=3):
+        """Initializes the C3k module with specified channels, number of layers, and configurations."""
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)  # hidden channels
+        # self.m = nn.Sequential(*(RepBottleneck(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n)))
+        self.m = nn.Sequential(*(Bottleneck_InvertedResidual(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n)))
+
+class C3k2_InvertedResidual(C2f):
+    """Faster Implementation of CSP Bottleneck with 2 convolutions."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        """Initializes the C3k2 module, a faster CSP Bottleneck with 2 convolutions and optional C3k blocks."""
+        super().__init__(c1, c2, n, shortcut, g, e)
+        self.m = nn.ModuleList(
+            C3k_InvertedResidual(self.c, self.c, 2, shortcut, g) if c3k else Bottleneck_InvertedResidual(self.c, self.c, shortcut, g) for _ in range(n)
+        )

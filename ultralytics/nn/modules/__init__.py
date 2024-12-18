@@ -58,7 +58,8 @@ from .block import (
     SCDown,
     Sparse_C2PSA,
     C3k2_Deform,
-    C2f_SEDA
+    C2f_SEDA,
+    C3k2_InvertedResidual
 )
 from .conv import (
     CBAM,

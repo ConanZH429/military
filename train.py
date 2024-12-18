@@ -39,9 +39,9 @@ elif '4090' in GPU_name:
 elif '3090' in GPU_name:
     batch = 64
     
-model_name = 'ultralytics/cfg/models/military/yolov8.yaml'
+model_name = 'ultralytics/cfg/models/military/yolo11-InvertedResidual.yaml'
 epochs = 5
-# os.environ["COMET_MODE"] = "offline"
+os.environ["COMET_MODE"] = "offline"
 name = f'{model_name[model_name.rfind("/")+1:].split(".")[0]}-SGD-{epochs}-{batch}-{time}'
 
 model = YOLO(model=model_name)
