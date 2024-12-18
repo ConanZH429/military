@@ -53,54 +53,57 @@ model.train(
     name=name,
 )
 
-# val
-experiment = comet_ml.start(experiment_key=model.trainer.comet_key)
-label = {0: "tank", 1: "armored", 2: "truck", 3: "light"}
+try:
+    # val
+    experiment = comet_ml.start(experiment_key=model.trainer.comet_key)
+    label = {0: "tank", 1: "armored", 2: "truck", 3: "light"}
 
-best_path = f"./military/{name}/weights/best.pt"
-model = YOLO(best_path)
-test_name = "test-" + name
-metrics = model.val(split="test", name=test_name)
-metrics_dict = metrics.results_dict
+    best_path = f"./military/{name}/weights/best.pt"
+    model = YOLO(best_path)
+    test_name = "test-" + name
+    metrics = model.val(split="test", name=test_name)
+    metrics_dict = metrics.results_dict
 
-# 指标
-print("Uploading metrics...")
-metrics_dict["test-metrics/precision(B)"] = metrics_dict["metrics/precision(B)"]
-del metrics_dict["metrics/precision(B)"]
-metrics_dict["test-metrics/recall(B)"] = metrics_dict["metrics/recall(B)"]
-del metrics_dict["metrics/recall(B)"]
-metrics_dict["test-metrics/mAP50(B)"] = metrics_dict["metrics/mAP50(B)"]
-del metrics_dict["metrics/mAP50(B)"]
-metrics_dict["test-metrics/mAP50-95(B)"] = metrics_dict["metrics/mAP50-95(B)"]
-del metrics_dict["metrics/mAP50-95(B)"]
-metrics_dict["test-metrics/mAP75(B)"] = metrics.box.map75
-for i in range(4):
-    metrics_dict[f"test-metrics/precision_{label[i]}(B)"] = metrics.box.p[i]
-    metrics_dict[f"test-metrics/recall_{label[i]}(B)"] = metrics.box.r[i]
-    metrics_dict[f"test-metrics/ap50_{label[i]}(B)"] = metrics.box.ap50[i]
-    metrics_dict[f"test-metrics/ap50-95_{label[i]}(B)"] = metrics.box.maps[i]
-    metrics_dict[f"test-metrics/f1_{label[i]}(B)"] = metrics.box.f1[i]
+    # 指标
+    print("Uploading metrics...")
+    metrics_dict["test-metrics/precision(B)"] = metrics_dict["metrics/precision(B)"]
+    del metrics_dict["metrics/precision(B)"]
+    metrics_dict["test-metrics/recall(B)"] = metrics_dict["metrics/recall(B)"]
+    del metrics_dict["metrics/recall(B)"]
+    metrics_dict["test-metrics/mAP50(B)"] = metrics_dict["metrics/mAP50(B)"]
+    del metrics_dict["metrics/mAP50(B)"]
+    metrics_dict["test-metrics/mAP50-95(B)"] = metrics_dict["metrics/mAP50-95(B)"]
+    del metrics_dict["metrics/mAP50-95(B)"]
+    metrics_dict["test-metrics/mAP75(B)"] = metrics.box.map75
+    for i in range(4):
+        metrics_dict[f"test-metrics/precision_{label[i]}(B)"] = metrics.box.p[i]
+        metrics_dict[f"test-metrics/recall_{label[i]}(B)"] = metrics.box.r[i]
+        metrics_dict[f"test-metrics/ap50_{label[i]}(B)"] = metrics.box.ap50[i]
+        metrics_dict[f"test-metrics/ap50-95_{label[i]}(B)"] = metrics.box.maps[i]
+        metrics_dict[f"test-metrics/f1_{label[i]}(B)"] = metrics.box.f1[i]
 
-metrics_dict[f"test-metrics/f1(B)"] = metrics.box.f1.mean()
-experiment.log_metrics(metrics_dict)
-print("Uploading metrics done.")
-# 混淆矩阵
-print("Uploading confusion matrix...")
-experiment.log_confusion_matrix(
-    matrix=metrics.confusion_matrix.matrix.astype(int).tolist(),
-    labels=["tank", "armored", "truck", "light", "background"],
-    file_name="test-confusion-matrix.json"
-)
-print("Uploading confusion matrix done.")
-# 图像
-val_path = Path(f"./military/{test_name}")
-# 将val_path下的图片上传到comet
-for img in val_path.iterdir():
-    img_name = img.name
-    if "val" in img_name:
-        img_name = img_name.replace("val_", "test")
-    else:
-        img_name = "test_" + img_name
-    experiment.log_image(str(img), name=img_name)
-
-os.system("/usr/bin/shutdown")
+    metrics_dict[f"test-metrics/f1(B)"] = metrics.box.f1.mean()
+    experiment.log_metrics(metrics_dict)
+    print("Uploading metrics done.")
+    # 混淆矩阵
+    print("Uploading confusion matrix...")
+    experiment.log_confusion_matrix(
+        matrix=metrics.confusion_matrix.matrix.astype(int).tolist(),
+        labels=["tank", "armored", "truck", "light", "background"],
+        file_name="test-confusion-matrix.json"
+    )
+    print("Uploading confusion matrix done.")
+    # 图像
+    val_path = Path(f"./military/{test_name}")
+    # 将val_path下的图片上传到comet
+    for img in val_path.iterdir():
+        img_name = img.name
+        if "val" in img_name:
+            img_name = img_name.replace("val_", "test")
+        else:
+            img_name = "test_" + img_name
+        experiment.log_image(str(img), name=img_name)
+except Exception as e:
+    print(e)
+finally:
+    os.system("/usr/bin/shutdown")
