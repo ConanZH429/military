@@ -26,6 +26,9 @@ os.system(f'cp ./train.txt {data_path}/train.txt')
 os.system(f'cp ./val.txt {data_path}/val.txt')
 os.system(f'cp ./test.txt {data_path}/test.txt')
 os.environ["COMET_API_KEY"] = "agcu7oeqU395peWf6NCNqnTa7"
+# 设置全局的git信息
+os.system("git config --global user.email '863101876@qq.com'")
+os.system("git config --global user.name 'ConanZH'")
 
 t = time = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
 # 设置超参数
